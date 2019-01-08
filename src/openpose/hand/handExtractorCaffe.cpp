@@ -73,7 +73,7 @@ namespace op
             }
         }
 
-        void connectKeypoints(Array<float>& handCurrent, const double scaleInputToOutput, const int person,
+        void connectKeypoints(Array<float>& handCurrent, const int person,
                               const cv::Mat& affineMatrix, const float* handPeaks)
         {
             try
@@ -86,12 +86,10 @@ namespace op
                     const auto y = handPeaks[xyIndex + 1];
                     const auto score = handPeaks[xyIndex + 2];
                     const auto baseIndex = handCurrent.getSize(2) * (part + person * handCurrent.getSize(1));
-                    handCurrent[baseIndex] = (float)(scaleInputToOutput
-                                           * (affineMatrix.at<double>(0,0)*x + affineMatrix.at<double>(0,1)*y
-                                               + affineMatrix.at<double>(0,2)));
-                    handCurrent[baseIndex+1] = (float)(scaleInputToOutput
-                                             * (affineMatrix.at<double>(1,0)*x + affineMatrix.at<double>(1,1)*y
-                                                 + affineMatrix.at<double>(1,2)));
+                    handCurrent[baseIndex] = (float)(affineMatrix.at<double>(0,0)*x + affineMatrix.at<double>(0,1)*y
+                                                     + affineMatrix.at<double>(0,2));
+                    handCurrent[baseIndex+1] = (float)(affineMatrix.at<double>(1,0)*x + affineMatrix.at<double>(1,1)*y
+                                                       + affineMatrix.at<double>(1,2));
                     handCurrent[baseIndex+2] = score;
                 }
             }
@@ -162,7 +160,7 @@ namespace op
             }
         }
 
-        inline void reshapeFaceExtractorCaffe(std::shared_ptr<ResizeAndMergeCaffe<float>>& resizeAndMergeCaffe,
+        inline void reshapeHandExtractorCaffe(std::shared_ptr<ResizeAndMergeCaffe<float>>& resizeAndMergeCaffe,
                                               std::shared_ptr<MaximumCaffe<float>>& maximumCaffe,
                                               boost::shared_ptr<caffe::Blob<float>>& caffeNetOutputBlob,
                                               std::shared_ptr<caffe::Blob<float>>& heatMapsBlob,
@@ -195,7 +193,7 @@ namespace op
                                            const float rangeScales, const std::vector<HeatMapType>& heatMapTypes,
                                            const ScaleMode heatMapScale,
                                            const bool enableGoogleLogging) :
-        HandExtractor{netInputSize, netOutputSize, numberScales, rangeScales, heatMapTypes, heatMapScale}
+        HandExtractorNet{netInputSize, netOutputSize, numberScales, rangeScales, heatMapTypes, heatMapScale}
         #if defined USE_CAFFE
         , upImpl{new ImplHandExtractorCaffe{modelFolder, gpuId, enableGoogleLogging}}
         #endif
@@ -255,15 +253,14 @@ namespace op
     }
 
     void HandExtractorCaffe::forwardPass(const std::vector<std::array<Rectangle<float>, 2>> handRectangles,
-                                         const cv::Mat& cvInputData,
-                                         const double scaleInputToOutput)
+                                         const cv::Mat& cvInputData)
     {
         try
         {
             #if defined USE_CAFFE
-                if (!handRectangles.empty())
+                if (mEnabled && !handRectangles.empty())
                 {
-                    // Security checks
+                    // Sanity check
                     if (cvInputData.empty())
                         error("Empty cvInputData.", __LINE__, __FUNCTION__, __FILE__);
 
@@ -322,7 +319,7 @@ namespace op
                                     cropFrame(mHandImageCrop, affineMatrix, cvInputData, handRectangle, netInputSide,
                                               mNetOutputSize, mirrorImage);
                                     // Deep net + Estimate keypoint locations
-                                    detectHandKeypoints(handCurrent, scaleInputToOutput, person, affineMatrix);
+                                    detectHandKeypoints(handCurrent, person, affineMatrix);
                                 }
                                 // Multi-scale detection
                                 else
@@ -337,8 +334,8 @@ namespace op
                                         const auto scale = initScale
                                                          + mMultiScaleNumberAndRange.second * i / (numberScales-1.f);
                                         // Process hand
-                                        Array<float> handEstimated({1, handCurrent.getSize(1),
-                                                                    handCurrent.getSize(2)}, 0);
+                                        Array<float> handEstimated(
+                                            {1, handCurrent.getSize(1), handCurrent.getSize(2)}, 0.f);
                                         const auto handRectangleScale = recenter(
                                             handRectangle,
                                             (float)(intRound(handRectangle.width * scale) / 2 * 2),
@@ -359,7 +356,7 @@ namespace op
                                         cropFrame(mHandImageCrop, affineMatrix, cvInputData, handRectangleScale,
                                                   netInputSide, mNetOutputSize, mirrorImage);
                                         // Deep net + Estimate keypoint locations
-                                        detectHandKeypoints(handEstimated, scaleInputToOutput, 0, affineMatrix);
+                                        detectHandKeypoints(handEstimated, 0, affineMatrix);
                                         if (i == 0
                                             || getAverageScore(handEstimated,0) > getAverageScore(handCurrent,person))
                                             std::copy(handEstimated.getConstPtr(),
@@ -390,7 +387,6 @@ namespace op
             #else
                 UNUSED(handRectangles);
                 UNUSED(cvInputData);
-                UNUSED(scaleInputToOutput);
             #endif
         }
         catch (const std::exception& e)
@@ -399,8 +395,8 @@ namespace op
         }
     }
 
-    void HandExtractorCaffe::detectHandKeypoints(Array<float>& handCurrent, const double scaleInputToOutput,
-                                                 const int person, const cv::Mat& affineMatrix)
+    void HandExtractorCaffe::detectHandKeypoints(Array<float>& handCurrent, const int person,
+                                                 const cv::Mat& affineMatrix)
     {
         try
         {
@@ -412,41 +408,28 @@ namespace op
                 if (!upImpl->netInitialized)
                 {
                     upImpl->netInitialized = true;
-                    reshapeFaceExtractorCaffe(upImpl->spResizeAndMergeCaffe, upImpl->spMaximumCaffe,
+                    reshapeHandExtractorCaffe(upImpl->spResizeAndMergeCaffe, upImpl->spMaximumCaffe,
                                               upImpl->spCaffeNetOutputBlob, upImpl->spHeatMapsBlob,
                                               upImpl->spPeaksBlob, upImpl->mGpuId);
                 }
 
                 // 2. Resize heat maps + merge different scales
-                #ifdef USE_CUDA
-                    upImpl->spResizeAndMergeCaffe->Forward_gpu({upImpl->spCaffeNetOutputBlob.get()},
-                                                               {upImpl->spHeatMapsBlob.get()});
-                    cudaCheck(__LINE__, __FUNCTION__, __FILE__);
-                #elif USE_OPENCL
-                    upImpl->spResizeAndMergeCaffe->Forward_ocl({upImpl->spCaffeNetOutputBlob.get()},
-                                                               {upImpl->spHeatMapsBlob.get()});
-                #else
-                    upImpl->spResizeAndMergeCaffe->Forward_cpu({upImpl->spCaffeNetOutputBlob.get()},
-                                                               {upImpl->spHeatMapsBlob.get()});
-                #endif
+                upImpl->spResizeAndMergeCaffe->Forward(
+                    {upImpl->spCaffeNetOutputBlob.get()}, {upImpl->spHeatMapsBlob.get()});
 
                 // 3. Get peaks by Non-Maximum Suppression
-                #ifdef USE_CUDA
-                    upImpl->spMaximumCaffe->Forward_gpu({upImpl->spHeatMapsBlob.get()}, {upImpl->spPeaksBlob.get()});
-                    cudaCheck(__LINE__, __FUNCTION__, __FILE__);
-                #elif USE_OPENCL
-                    // CPU Version is already very fast (4ms) and data is sent to connectKeypoints as CPU for now anyway
-                    upImpl->spMaximumCaffe->Forward_cpu({upImpl->spHeatMapsBlob.get()}, {upImpl->spPeaksBlob.get()});
-                #else
-                    upImpl->spMaximumCaffe->Forward_cpu({upImpl->spHeatMapsBlob.get()}, {upImpl->spPeaksBlob.get()});
-                #endif
+                upImpl->spMaximumCaffe->Forward({upImpl->spHeatMapsBlob.get()}, {upImpl->spPeaksBlob.get()});
 
                 // Estimate keypoint locations
-                connectKeypoints(handCurrent, scaleInputToOutput, person, affineMatrix,
+                connectKeypoints(handCurrent, person, affineMatrix,
                                  upImpl->spPeaksBlob->mutable_cpu_data());
+
+                // 5. CUDA sanity check
+                #ifdef USE_CUDA
+                    cudaCheck(__LINE__, __FUNCTION__, __FILE__);
+                #endif
             #else
                 UNUSED(handCurrent);
-                UNUSED(scaleInputToOutput);
                 UNUSED(person);
                 UNUSED(affineMatrix);
             #endif

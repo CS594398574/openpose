@@ -1,4 +1,4 @@
-#if defined USE_CAFFE
+#ifdef USE_CAFFE
     #include <caffe/blob.hpp>
 #endif
 #include <opencv2/opencv.hpp> // CV_WARP_INVERSE_MAP, CV_INTER_LINEAR
@@ -15,7 +15,7 @@ namespace op
 {
     struct FaceExtractorCaffe::ImplFaceExtractorCaffe
     {
-        #if defined USE_CAFFE
+        #ifdef USE_CAFFE
             bool netInitialized;
             const int mGpuId;
             std::shared_ptr<NetCaffe> spNetCaffe;
@@ -38,7 +38,7 @@ namespace op
         #endif
     };
 
-    #if defined USE_CAFFE
+    #ifdef USE_CAFFE
         void updateFaceHeatMapsForPerson(Array<float>& heatMaps, const int person, const ScaleMode heatMapScaleMode,
                                          const float* heatMapsGpuPtr)
         {
@@ -107,14 +107,14 @@ namespace op
                                            const std::string& modelFolder, const int gpuId,
                                            const std::vector<HeatMapType>& heatMapTypes,
                                            const ScaleMode heatMapScale, const bool enableGoogleLogging) :
-        FaceExtractor{netInputSize, netOutputSize, heatMapTypes, heatMapScale}
-        #if defined USE_CAFFE
+        FaceExtractorNet{netInputSize, netOutputSize, heatMapTypes, heatMapScale}
+        #ifdef USE_CAFFE
         , upImpl{new ImplFaceExtractorCaffe{modelFolder, gpuId, enableGoogleLogging}}
         #endif
     {
         try
         {
-            #if !defined USE_CAFFE
+            #ifndef USE_CAFFE
                 UNUSED(netInputSize);
                 UNUSED(netOutputSize);
                 UNUSED(modelFolder);
@@ -123,6 +123,10 @@ namespace op
                 UNUSED(heatMapScale);
                 error("OpenPose must be compiled with the `USE_CAFFE` & `USE_CUDA` macro definitions in order to run"
                       " this functionality.", __LINE__, __FUNCTION__, __FILE__);
+            #endif
+            #ifdef COMMERCIAL_LICENSE
+                error("Face is not included in the commercial version of OpenPose yet. We might include it in the future after some"
+                      " commercial issues have been solved. Thanks!", __LINE__, __FUNCTION__, __FILE__);
             #endif
         }
         catch (const std::exception& e)
@@ -139,7 +143,7 @@ namespace op
     {
         try
         {
-            #if defined USE_CAFFE
+            #ifdef USE_CAFFE
                 // Logging
                 log("Starting initialization on thread.", Priority::Low, __LINE__, __FUNCTION__, __FILE__);
                 // Initialize Caffe net
@@ -165,15 +169,14 @@ namespace op
     }
 
     void FaceExtractorCaffe::forwardPass(const std::vector<Rectangle<float>>& faceRectangles,
-                                         const cv::Mat& cvInputData,
-                                         const double scaleInputToOutput)
+                                         const cv::Mat& cvInputData)
     {
         try
         {
-            #if defined USE_CAFFE
-                if (!faceRectangles.empty())
+            #ifdef USE_CAFFE
+                if (mEnabled && !faceRectangles.empty())
                 {
-                    // Security checks
+                    // Sanity check
                     if (cvInputData.empty())
                         error("Empty cvInputData.", __LINE__, __FUNCTION__, __FILE__);
 
@@ -248,30 +251,12 @@ namespace op
                             }
 
                             // 2. Resize heat maps + merge different scales
-                            #ifdef USE_CUDA
-                                upImpl->spResizeAndMergeCaffe->Forward_gpu({upImpl->spCaffeNetOutputBlob.get()},
-                                                                           {upImpl->spHeatMapsBlob.get()});
-                                cudaCheck(__LINE__, __FUNCTION__, __FILE__);
-                            #elif USE_OPENCL
-                                upImpl->spResizeAndMergeCaffe->Forward_ocl({upImpl->spCaffeNetOutputBlob.get()},
-                                                                           {upImpl->spHeatMapsBlob.get()});
-                            #else
-                                upImpl->spResizeAndMergeCaffe->Forward_cpu({upImpl->spCaffeNetOutputBlob.get()},
-                                                                           {upImpl->spHeatMapsBlob.get()});
-                            #endif
+                            upImpl->spResizeAndMergeCaffe->Forward(
+                                {upImpl->spCaffeNetOutputBlob.get()}, {upImpl->spHeatMapsBlob.get()});
 
                             // 3. Get peaks by Non-Maximum Suppression
-                            #ifdef USE_CUDA
-                                upImpl->spMaximumCaffe->Forward_gpu({upImpl->spHeatMapsBlob.get()},
-                                                                    {upImpl->spPeaksBlob.get()});
-                                cudaCheck(__LINE__, __FUNCTION__, __FILE__);
-                            #elif USE_OPENCL
-                                // CPU Version is already very fast (4ms) and data is sent to connectKeypoints as CPU for now anyway
-                                upImpl->spMaximumCaffe->Forward_cpu({upImpl->spHeatMapsBlob.get()}, {upImpl->spPeaksBlob.get()});
-                            #else
-                                upImpl->spMaximumCaffe->Forward_cpu({upImpl->spHeatMapsBlob.get()},
-                                                                    {upImpl->spPeaksBlob.get()});
-                            #endif
+                            upImpl->spMaximumCaffe->Forward(
+                                {upImpl->spHeatMapsBlob.get()}, {upImpl->spPeaksBlob.get()});
 
                             const auto* facePeaksPtr = upImpl->spPeaksBlob->mutable_cpu_data();
                             for (auto part = 0 ; part < mFaceKeypoints.getSize(1) ; part++)
@@ -282,25 +267,25 @@ namespace op
                                 const auto score = facePeaksPtr[xyIndex + 2];
                                 const auto baseIndex = mFaceKeypoints.getSize(2)
                                                      * (part + person * mFaceKeypoints.getSize(1));
-                                mFaceKeypoints[baseIndex] = (float)(scaleInputToOutput
-                                                                    * (Mscaling.at<double>(0,0) * x
-                                                                       + Mscaling.at<double>(0,1) * y
-                                                                       + Mscaling.at<double>(0,2)));
-                                mFaceKeypoints[baseIndex+1] = (float)(scaleInputToOutput
-                                                                      * (Mscaling.at<double>(1,0) * x
-                                                                         + Mscaling.at<double>(1,1) * y
-                                                                         + Mscaling.at<double>(1,2)));
+                                mFaceKeypoints[baseIndex] = (float)(Mscaling.at<double>(0,0) * x
+                                                                    + Mscaling.at<double>(0,1) * y
+                                                                    + Mscaling.at<double>(0,2));
+                                mFaceKeypoints[baseIndex+1] = (float)(Mscaling.at<double>(1,0) * x
+                                                                      + Mscaling.at<double>(1,1) * y
+                                                                      + Mscaling.at<double>(1,2));
                                 mFaceKeypoints[baseIndex+2] = score;
                             }
                             // HeatMaps: storing
-                            if (!mHeatMapTypes.empty()){
-                                #ifdef USE_CUDA
-                                    updateFaceHeatMapsForPerson(mHeatMaps, person, mHeatMapScaleMode,
-                                                                upImpl->spHeatMapsBlob->gpu_data());
-                                #else
-                                    updateFaceHeatMapsForPerson(mHeatMaps, person, mHeatMapScaleMode,
-                                                                upImpl->spHeatMapsBlob->cpu_data());
-                                #endif
+                            if (!mHeatMapTypes.empty())
+                            {
+                                updateFaceHeatMapsForPerson(
+                                    mHeatMaps, person, mHeatMapScaleMode,
+                                    #ifdef USE_CUDA
+                                        upImpl->spHeatMapsBlob->gpu_data()
+                                    #else
+                                        upImpl->spHeatMapsBlob->cpu_data()
+                                    #endif
+                                );
                             }
                         }
                     }
@@ -309,10 +294,14 @@ namespace op
                 }
                 else
                     mFaceKeypoints.reset();
+
+                // 5. CUDA sanity check
+                #ifdef USE_CUDA
+                    cudaCheck(__LINE__, __FUNCTION__, __FILE__);
+                #endif
             #else
                 UNUSED(faceRectangles);
                 UNUSED(cvInputData);
-                UNUSED(scaleInputToOutput);
             #endif
         }
         catch (const std::exception& e)

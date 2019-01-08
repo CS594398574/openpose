@@ -18,11 +18,16 @@ namespace op
         /**
          * Constructor of FlirReader. It opens all the available FLIR cameras
          */
-        explicit FlirReader(const std::string& cameraParametersPath, const Point<int>& cameraResolution);
+        explicit FlirReader(const std::string& cameraParametersPath, const Point<int>& cameraResolution,
+                            const bool undistortImage = true, const int cameraIndex = -1);
 
-        ~FlirReader();
+        virtual ~FlirReader();
 
         std::vector<cv::Mat> getCameraMatrices();
+
+        std::vector<cv::Mat> getCameraExtrinsics();
+
+        std::vector<cv::Mat> getCameraIntrinsics();
 
         std::string getNextFrameName();
 

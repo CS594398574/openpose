@@ -68,8 +68,8 @@ namespace op
     }
 
     template <typename T>
-    void nmsAccuratePeakPosition(const T* const sourcePtr, const int& peakLocX, const int& peakLocY,
-                                 const int& width, const int& height, T* output)
+    void nmsAccuratePeakPosition(T* output, const T* const sourcePtr, const int& peakLocX, const int& peakLocY,
+                                 const int& width, const int& height, const Point<T>& offset)
     {
         T xAcc = 0.f;
         T yAcc = 0.f;
@@ -98,18 +98,22 @@ namespace op
             }
         }
 
-        output[0] = xAcc / scoreAcc;
-        output[1] = yAcc / scoreAcc;
+        // Offset to keep Matlab format (empirically higher acc)
+        // Best results for 1 scale: x + 0, y + 0.5
+        // +0.5 to both to keep Matlab format
+        output[0] = xAcc / scoreAcc + offset.x;
+        output[1] = yAcc / scoreAcc + offset.y;
         output[2] = sourcePtr[peakLocY*width + peakLocX];
     }
 
     template <typename T>
     void nmsCpu(T* targetPtr, int* kernelPtr, const T* const sourcePtr, const T threshold,
-                const std::array<int, 4>& targetSize, const std::array<int, 4>& sourceSize)
+                const std::array<int, 4>& targetSize, const std::array<int, 4>& sourceSize,
+                const Point<T>& offset)
     {
         try
         {
-            // Security checks
+            // Sanity checks
             if (sourceSize.empty())
                 error("sourceSize cannot be empty.", __LINE__, __FUNCTION__, __FILE__);
             if (targetSize.empty())
@@ -149,15 +153,14 @@ namespace op
                             if (currKernelPtr[index] == 1)
                             {
                                 // Accurate Peak Position
-                                nmsAccuratePeakPosition(currSourcePtr, x, y, sourceWidth, sourceHeight,
-                                                        &currTargetPtr[currentPeakCount*3]);
+                                nmsAccuratePeakPosition(&currTargetPtr[currentPeakCount*3], currSourcePtr, x, y,
+                                                        sourceWidth, sourceHeight, offset);
                                 currentPeakCount++;
                             }
                         }
-
                     }
                 }
-                currTargetPtr[0] = currentPeakCount-1;
+                currTargetPtr[0] = T(currentPeakCount-1);
             }
         }
         catch (const std::exception& e)
@@ -166,8 +169,10 @@ namespace op
         }
     }
 
-    template void nmsCpu(float* targetPtr, int* kernelPtr, const float* const sourcePtr, const float threshold,
-                         const std::array<int, 4>& targetSize, const std::array<int, 4>& sourceSize);
-    template void nmsCpu(double* targetPtr, int* kernelPtr, const double* const sourcePtr, const double threshold,
-                         const std::array<int, 4>& targetSize, const std::array<int, 4>& sourceSize);
+    template OP_API void nmsCpu(
+        float* targetPtr, int* kernelPtr, const float* const sourcePtr, const float threshold,
+        const std::array<int, 4>& targetSize, const std::array<int, 4>& sourceSize, const Point<float>& offset);
+    template OP_API void nmsCpu(
+        double* targetPtr, int* kernelPtr, const double* const sourcePtr, const double threshold,
+        const std::array<int, 4>& targetSize, const std::array<int, 4>& sourceSize, const Point<double>& offset);
 }

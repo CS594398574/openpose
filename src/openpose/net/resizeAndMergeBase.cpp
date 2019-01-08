@@ -14,13 +14,13 @@ namespace op
     {
         try
         {
-            // Security checks
+            // Scale used in CUDA/CL to know scale ratio between input and output
+            // CPU directly uses sourceWidth/Height and targetWidth/Height
+            UNUSED(scaleInputToNetInputs);
+
+            // Sanity check
             if (sourceSizes.empty())
                 error("sourceSizes cannot be empty.", __LINE__, __FUNCTION__, __FILE__);
-            if (sourcePtrs.size() != sourceSizes.size() || sourceSizes.size() != scaleInputToNetInputs.size())
-                error("Size(sourcePtrs) must match size(sourceSizes) and size(scaleInputToNetInputs). Currently: "
-                      + std::to_string(sourcePtrs.size()) + " vs. " + std::to_string(sourceSizes.size()) + " vs. "
-                      + std::to_string(scaleInputToNetInputs.size()) + ".", __LINE__, __FUNCTION__, __FILE__);
 
             // Params
             const auto nums = (signed)sourceSizes.size();
@@ -113,12 +113,10 @@ namespace op
         }
     }
 
-    template void resizeAndMergeCpu(float* targetPtr, const std::vector<const float*>& sourcePtrs,
-                                    const std::array<int, 4>& targetSize,
-                                    const std::vector<std::array<int, 4>>& sourceSizes,
-                                    const std::vector<float>& scaleInputToNetInputs);
-    template void resizeAndMergeCpu(double* targetPtr, const std::vector<const double*>& sourcePtrs,
-                                    const std::array<int, 4>& targetSize,
-                                    const std::vector<std::array<int, 4>>& sourceSizes,
-                                    const std::vector<double>& scaleInputToNetInputs);
+    template OP_API void resizeAndMergeCpu(
+        float* targetPtr, const std::vector<const float*>& sourcePtrs, const std::array<int, 4>& targetSize,
+        const std::vector<std::array<int, 4>>& sourceSizes, const std::vector<float>& scaleInputToNetInputs);
+    template OP_API void resizeAndMergeCpu(
+        double* targetPtr, const std::vector<const double*>& sourcePtrs, const std::array<int, 4>& targetSize,
+        const std::vector<std::array<int, 4>>& sourceSizes, const std::vector<double>& scaleInputToNetInputs);
 }

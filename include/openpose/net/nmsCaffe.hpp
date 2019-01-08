@@ -9,7 +9,7 @@ namespace op
     // the compatibility with any generic Caffe version, we keep this 'layer' inside our library rather than in the
     // Caffe code.
     template <typename T>
-    class OP_API NmsCaffe
+    class NmsCaffe
     {
     public:
         explicit NmsCaffe();
@@ -25,6 +25,11 @@ namespace op
 
         void setThreshold(const T threshold);
 
+        // Empirically gives better results (copied from Matlab original code)
+        void setOffset(const Point<T>& offset);
+
+        virtual void Forward(const std::vector<caffe::Blob<T>*>& bottom, const std::vector<caffe::Blob<T>*>& top);
+
         virtual void Forward_cpu(const std::vector<caffe::Blob<T>*>& bottom, const std::vector<caffe::Blob<T>*>& top);
 
         virtual void Forward_gpu(const std::vector<caffe::Blob<T>*>& bottom, const std::vector<caffe::Blob<T>*>& top);
@@ -39,6 +44,7 @@ namespace op
 
     private:
         T mThreshold;
+        Point<T> mOffset;
         int mGpuID;
 
         // PIMPL idiom

@@ -7,11 +7,14 @@
 
 namespace op
 {
+    // This worker will do 3-D rendering
     template<typename TDatums>
     class WGui3D : public WorkerConsumer<TDatums>
     {
     public:
         explicit WGui3D(const std::shared_ptr<Gui3D>& gui3D);
+
+        virtual ~WGui3D();
 
         void initializationOnThread();
 
@@ -35,6 +38,11 @@ namespace op
     template<typename TDatums>
     WGui3D<TDatums>::WGui3D(const std::shared_ptr<Gui3D>& gui3D) :
         spGui3D{gui3D}
+    {
+    }
+
+    template<typename TDatums>
+    WGui3D<TDatums>::~WGui3D()
     {
     }
 
@@ -78,6 +86,12 @@ namespace op
                 }
                 // Refresh/update GUI
                 spGui3D->update();
+                // Read OpenCV mat equivalent
+                if (!tDatums->empty())
+                {
+                    auto& tDatum = (*tDatums)[0];
+                    tDatum.cvOutputData3D = spGui3D->readCvMat();
+                }
                 // Profiling speed
                 if (!tDatums->empty())
                 {
